@@ -57,10 +57,71 @@
 /** Helper Functions*/
 /****************************************************************************** */
 
+function getRequestUrl(requestType, recipeId) {
+
+    switch (requestType) {
+        case "POST":
+            return 'http://127.0.0.1:8000/recipes';
+        
+        case "DELETE":
+        case "PUT":
+            return `http://127.0.0.1:8000/recipes/${recipeId}`;
+        
+        default:
+            return 'http://127.0.0.1:8000/recipes';      
+    }
+    
+}
+
+async function sendRecipe(recipeData, requestType, recipeId) {
+
+    let url = getRequestUrl(requestType, recipeId);
+    let request = {
+        headers: { "Content-Type": "application/json" },
+        method: requestType,
+        body: JSON.stringify(recipeData)
+    };
+
+    try {
+        let response = await fetch(url, request);
+
+        if (!response.ok) {
+            throw new Error(`Error: respose status not ok. ${response.status}`)
+        }
+
+        let data = await response.json();
+
+        console.log(data);
+        displayRecipe();
+        console.log(`${requestType} was successful!`);
+
+    } catch (error) {
+        console.error(error)
+    }
+    
+}
+
+
+
 // Function that gets all recipes
-function getAllRecipes() {
-    // Gets and returns all recipes from the local storage
-    return JSON.parse(localStorage.getItem('recipes')) || [];
+async function getAllRecipes() {
+    url = getRequestUrl();
+    try {
+        const response = await fetch(url);
+
+        if (!response.ok) {
+            throw new Error(`Error: respose status not ok. ${response.status}`)
+        }
+
+        const data = await response.json();
+
+        console.log(`Recipe fetched successfully!`);
+        return data;
+
+    } catch (error) {
+        console.error(error);
+    }
+
 }
 
 // Checks that the image url has or starts with https
@@ -116,8 +177,6 @@ function clearOwlCarousel() {
     // Get the total number of items in the carousel
     let itemCount = owlCarousel.find('.owl-item').length;
 
-    console.log(itemCount)
-
     // Loop through and remove each item without animation
     for (let i = 0; i < itemCount; i++) {
         owlCarousel.trigger('remove.owl.carousel', [i, false]);
@@ -129,19 +188,22 @@ function clearOwlCarousel() {
 
 // Function displays recipes to user
 function displayRecipe() {
-    let recipes = getAllRecipes();
+    getAllRecipes()
+        .then(recipes => {
+            // Clear existing content inside the 'recipe-display-grid' and 'recipe-display-carousel'
+            $('#recipe-display-grid').empty();
+            clearOwlCarousel();
 
-    // Clear existing content inside the 'recipe-display-grid' and 'recipe-display-carousel'
-    $('#recipe-display-grid').empty();
-    clearOwlCarousel();
-
-    if (recipes) {
-        recipes.forEach((recipe) => {
-            addRecipeToCarousel(recipe);
-            addRecipeToMainDisplay(recipe);
-        });
-
-    }    
+            if (recipes) {
+                recipes.forEach((recipe) => {
+                    addRecipeToCarousel(recipe);
+                    addRecipeToMainDisplay(recipe);
+                });
+            } 
+        })
+        .catch(error => {
+            console.error('Error:', error.message);
+        });   
 }
 
 
@@ -199,7 +261,7 @@ function addRecipeToMainDisplay(recipe) {
                     </p>
                     <h5 class="mb-1 " style="font-size: medium;">Preparation steps</h5>
                     <p class="mb-4 justify-text">
-                        ${recipe.steps}
+                        ${recipe.steps.replace(/\n/g, '<br>')}
                     </p>
                 </div>
             <div>
@@ -213,23 +275,27 @@ function addRecipeToMainDisplay(recipe) {
 
 
 // Function to find recipe index by recipe name
-function findRecipeIndexByName(name) {
-    let recipes = getAllRecipes();
-    for (let i = 0; i < recipes.length; i++) {
-        if (recipes[i].name === name) {
-            return i; // Return the index if found
+async function findRecipeIdByName(name) {
+    try {
+        let recipes = await getAllRecipes();
+        let recipe = recipes.find(recipe => recipe.name === name);
+
+        if (!recipe) {
+            return null;
         }
+
+        return recipe.id;
+
+    } catch (error) {
+        console.error("Error:", error);
     }
-    return null; // Return null if not found
 }
 
 // Function that handles form submission
 function recipeFormSubmission() {
-    // contains all the recipes fetched from the local storage
-    let recipes = getAllRecipes();
 
     // handles users data when the form is submitted
-    $("#recipe-form").submit(function (event) {
+    $("#recipe-form").submit(async function (event) {
         event.preventDefault(); // Prevent the default form submission behavior
 
         // reset form validation if already exists
@@ -248,79 +314,75 @@ function recipeFormSubmission() {
             let enteredPreparationSteps = $("#preparation-steps").val();
             let enteredImageUrl = $("#image-url").val();
 
-            let recipeIndex = findRecipeIndexByName(enteredRecipeName);
+            // new or updated recipe
+            let recipeData = {
+                name: enteredRecipeName,
+                ingredients: enteredIngredients,
+                steps: enteredPreparationSteps,
+                url: enteredImageUrl
+            };
 
-            if (!recipeIndex) {
-                // create a new recipe
-                let newRecipe = {
-                    name: enteredRecipeName,
-                    ingredients: enteredIngredients,
-                    steps: enteredPreparationSteps,
-                    url: enteredImageUrl
-                };
 
-                // add the new recipe to the recipes array
-                recipes.push(newRecipe);
-
-            } else {
-                recipes[recipeIndex].name = enteredRecipeName;
-                recipes[recipeIndex].ingredients = enteredIngredients;
-                recipes[recipeIndex].steps = enteredPreparationSteps;
-                recipes[recipeIndex].url = enteredImageUrl;
+            const recipeId = await findRecipeIdByName(enteredRecipeName);
+            if (recipeId) {
+                // send recipeData to update existing data
+                sendRecipe(recipeData, "PUT", recipeId);
             }
-
-            // add recipes to local storage
-            localStorage.setItem('recipes', JSON.stringify(recipes));
+            else {
+                // send recipeData to be posted
+                sendRecipe(recipeData, "POST");
+            }
 
             // clear the input fields
             $('#recipe-name').val('');
             $('#ingredients').val('');
             $('#preparation-steps').val('');
             $('#image-url').val('');
+
+            displayRecipe();
         }
-        
-        displayRecipe();
     });
 }
 
 
 function editRecipe() {
     // Event delegation for editRecipe buttons
-    $(document).on('click', '.editRecipe', function () {
+    $(document).on('click', '.editRecipe', async function () {
         let editButtonName = $(this).attr('name');
-        let recipes = getAllRecipes();
-
-        for (let recipe of recipes) {
-            if (recipe.name === editButtonName) {
+        try {
+            let recipes = await getAllRecipes();
+            let recipeToEdit = recipes.find(recipe => recipe.name === editButtonName);
+            if (recipeToEdit) {
                 // populate input fields with recipe data
-                $('#recipe-name').val(recipe.name);
-                $('#ingredients').val(recipe.ingredients);
-                $('#preparation-steps').val(recipe.steps);
-                $('#image-url').val(recipe.url);
-                break;
+                $('#recipe-name').val(recipeToEdit.name);
+                $('#ingredients').val(recipeToEdit.ingredients);
+                $('#preparation-steps').val(recipeToEdit.steps);
+                $('#image-url').val(recipeToEdit.url);
             }
+        } catch (error) {
+            console.error("Error:", error);
         }
     });
 }
 
 function deleteRecipe() {
 
-    $(document).on('click', '.deleteRecipe', function () {
-        let recipes = getAllRecipes();
+    $(document).on('click', '.deleteRecipe', async function () {
         let deleteButtonName = $(this).attr('name');
+        try {
+            let recipes = await getAllRecipes();
+            recipeToDelete = recipes.find(recipe => recipe.name === deleteButtonName);
 
-        for (let recipe of recipes) {
-            if (recipe.name === deleteButtonName) {
-                let indexOfRecipe = recipes.indexOf(recipe);
-                recipes.splice(indexOfRecipe, 1); // Remove one element at the specified index
-                console.log(`${recipe.name} deleted successfully!`);
-                break;
+            if (recipeToDelete) {
+                // send recipe for delete
+                sendRecipe(recipes, "DELETE", recipeToDelete.id);
             }
-        }
 
-        // Update local storage after deletion
-        localStorage.setItem('recipes', JSON.stringify(recipes));
-        displayRecipe();
+            displayRecipe();
+
+        } catch (error) {
+            console.error("Error:", error);
+        }
     });
 }
 
@@ -346,7 +408,6 @@ $(document).ready(function () {
     // Handles recipe deletion
     deleteRecipe();
 
-    localStorage.clear()
    
 });
 
